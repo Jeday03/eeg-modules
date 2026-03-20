@@ -14,11 +14,11 @@ buffer_eeg = None
 fs = None
 n_channels = None
 window_samples = None
+ch_names_ref = None  
 
 
 def validate_chunk(msg):
-
-    if msg["type"] != "eeg_chunk":
+    if msg.get("type") != "eeg_chunk":
         return False
 
     required = ["fs", "ch_names", "ts", "eeg"]
@@ -47,62 +47,99 @@ def validate_chunk(msg):
 
 async def main():
 
-    global fs, n_channels, window_samples, buffer_eeg
+    global fs, n_channels, window_samples, buffer_eeg, ch_names_ref
 
-    async with websockets.connect(WS_URL) as ws:
+    while True:  
 
-        print("Connected to acquisition")
+        try:
+            async with websockets.connect(WS_URL) as ws:
 
-        while True:
+                print("Connected to acquisition")
 
-            msg = await ws.recv()
-            data = json.loads(msg)
+                while True:
 
-            if not validate_chunk(data):
-                print("Invalid chunk")
-                continue
+                    try:
+                        msg = await ws.recv()
+                        data = json.loads(msg)
 
-            fs = data["fs"]
-            ch_names = data["ch_names"]
-            ts = data["ts"]
-            eeg = data["eeg"]
+                    except json.JSONDecodeError:
+                        print("Invalid JSON recebido")
+                        continue
 
-            n_channels = len(ch_names)
+                    except websockets.exceptions.ConnectionClosed:
+                        print("Conexão perdida. Reconectando...")
+                        break
 
-            if buffer_eeg is None:
-                buffer_eeg = [deque() for _ in range(n_channels)]
-                window_samples = int(window_sec * fs)
+                    if not validate_chunk(data):
+                        print("Invalid chunk")
+                        continue
 
-            
-            for i in range(len(ts)):
-                buffer_ts.append(ts[i])
-
-                for ch in range(n_channels):
-                    buffer_eeg[ch].append(eeg[ch][i])
-
-            
-            while len(buffer_ts) > window_samples:
-                buffer_ts.popleft()
-
-                for ch in range(n_channels):
-                    buffer_eeg[ch].popleft()
-
-            
-            if len(buffer_ts) == window_samples:
-
-                X = np.zeros((window_samples, n_channels))
-
-                for ch in range(n_channels):
-                    X[:, ch] = list(buffer_eeg[ch])
-
-                ts_window = list(buffer_ts)
-
-                duration = ts_window[-1] - ts_window[0]
-
-                print("Window ready")
-                print("X shape:", X.shape)
-                print("Duration:", duration)
-                print()
                 
+                    fs_new = data["fs"]
+                    ch_names = data["ch_names"]
+                    ts = data["ts"]
+                    eeg = data["eeg"]
+
+                    n_channels_new = len(ch_names)
+
+                    
+                    if buffer_eeg is None:
+                        fs = fs_new
+                        n_channels = n_channels_new
+                        ch_names_ref = ch_names
+
+                        buffer_eeg = [deque() for _ in range(n_channels)]
+                        window_samples = int(window_sec * fs)
+
+                        print("Configuração inicial definida")
+
+                    
+                    if (
+                        fs_new != fs
+                        or n_channels_new != n_channels
+                        or ch_names != ch_names_ref
+                    ):
+                        print("Inconsistência detectada no stream. Chunk descartado.")
+                        continue
+
+                   
+                    for i in range(len(ts)):
+
+                        buffer_ts.append(ts[i])
+
+                        for ch in range(n_channels):
+                            buffer_eeg[ch].append(eeg[ch][i])
+
+                    
+                    while len(buffer_ts) > window_samples:
+
+                        buffer_ts.popleft()
+
+                        for ch in range(n_channels):
+                            buffer_eeg[ch].popleft()
+
+                
+                    if len(buffer_ts) >= window_samples:
+
+                        X = np.zeros((window_samples, n_channels))
+
+                        for ch in range(n_channels):
+                            X[:, ch] = list(buffer_eeg[ch])[-window_samples:]
+
+                        ts_window = list(buffer_ts)[-window_samples:]
+
+                        duration = ts_window[-1] - ts_window[0]
+
+                        print("Window ready")
+                        print("X shape:", X.shape)
+                        print("Duration:", duration)
+                        print()
+
+        except Exception as e:
+            print("Erro de conexão:", e)
+
+        print("Tentando reconectar em 2 segundos...")
+        await asyncio.sleep(2)
+
 
 asyncio.run(main())
