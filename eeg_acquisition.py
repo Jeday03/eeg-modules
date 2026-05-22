@@ -19,6 +19,7 @@ if args.serial:
 
 board_id = args.board
 board = BoardShim(board_id, params)
+print("board_id:", board_id)
 board.prepare_session()
 board.start_stream()
 
@@ -93,7 +94,8 @@ async def broadcast() -> None:
     ch_names = [str(i) for i in eeg_ch]
 
     while True:
-        data = board.get_current_board_data(args.n)
+        data = board.get__board_data(args.n)
+        print("data shape:", data.shape)
 
         if data.shape[1] > 0:
             eeg = [data[i].tolist() for i in eeg_ch]
@@ -248,6 +250,8 @@ async def on_cleanup(app: web.Application) -> None:
     app["task"].cancel()
     try:
         board.stop_stream()
+        import time
+    time.sleep(2)
         board.release_session()
     except Exception:
         pass
