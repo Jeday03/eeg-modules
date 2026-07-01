@@ -83,19 +83,26 @@ def bandpass_filter(X, fs, low, high, order=4):
     )
 
 
-def preprocess_mi(X):
+def preprocess_mi(X, fs):
+
+    X_filtered = bandpass_filter(
+        X,
+        fs,
+        8,
+        30
+    )
 
     mean = np.mean(
-        X,
+        X_filtered,
         axis=0
     )
 
     std = np.std(
-        X,
+        X_filtered,
         axis=0
     ) + 1e-8
 
-    return (X - mean) / std
+    return (X_filtered - mean) / std
 
 
 def compute_power(X):
@@ -152,7 +159,9 @@ def baseline_decision(features):
         return "RIGHT", score
 
     return "LEFT", score
-    async def main():
+
+
+async def main():
 
     global fs
     global n_channels
@@ -281,14 +290,18 @@ def baseline_decision(features):
                         X[:, ch] = list(
                             buffer_eeg[ch]
                         )
-                                            ts_window = list(buffer_ts)
+
+                    ts_window = list(buffer_ts)
 
                     duration = (
                         ts_window[-1]
                         - ts_window[0]
                     )
 
-                    X_pre = preprocess_mi(X)
+                    X_pre = preprocess_mi(
+                        X,
+                        fs
+                    )
 
                     features = extract_features(
                         X_pre,
