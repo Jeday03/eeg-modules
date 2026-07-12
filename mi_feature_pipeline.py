@@ -318,19 +318,19 @@ async def main():
                         continue
 
                     samples_since_last = 0
-                        label = trial_labels[
+                    label = trial_labels[
                         trial_number % 2
-                                ]
+                    ]
 
-                        print()
+                    print()
 
-                        print("Prepare...")
+                    print("Prepare...")
 
-                        await asyncio.sleep(2)
+                    await asyncio.sleep(2)
 
-                        print(label)
+                    print(label)
 
-                        print()
+                    print()
 
                     X = np.zeros(
                         (
