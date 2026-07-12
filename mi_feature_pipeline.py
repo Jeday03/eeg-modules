@@ -2,6 +2,8 @@ import asyncio
 import json
 import websockets
 import numpy as np
+import time
+import random
 
 from collections import deque
 from scipy.signal import butter, filtfilt
@@ -23,7 +25,17 @@ step_samples = None
 
 samples_since_last = 0
 channel_names = None
+trial_data = []
 
+left_trials = 0
+right_trials = 0
+
+trial_number = 0
+
+trial_labels = [
+    "LEFT",
+    "RIGHT"
+]
 
 def validate_chunk(msg):
 
@@ -160,6 +172,32 @@ def baseline_decision(features):
 
     return "LEFT", score
 
+def save_trial(
+    label,
+    ts_start,
+    ts_end,
+    X,
+    X_pre,
+    features
+):
+
+    trial = {
+
+        "label": label,
+
+        "ts_start": ts_start,
+
+        "ts_end": ts_end,
+
+        "X": X.copy(),
+
+        "X_pre": X_pre.copy(),
+
+        "features": features.copy()
+    }
+
+    trial_data.append(trial)
+
 
 async def main():
 
@@ -170,6 +208,9 @@ async def main():
     global buffer_eeg
     global channel_names
     global samples_since_last
+    global trial_number
+    global left_trials
+    global right_trials
 
     while True:
 
@@ -277,6 +318,19 @@ async def main():
                         continue
 
                     samples_since_last = 0
+                        label = trial_labels[
+                        trial_number % 2
+                                ]
+
+                        print()
+
+                        print("Prepare...")
+
+                        await asyncio.sleep(2)
+
+                        print(label)
+
+                        print()
 
                     X = np.zeros(
                         (
