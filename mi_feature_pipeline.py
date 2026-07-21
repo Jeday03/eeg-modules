@@ -2,9 +2,6 @@ import asyncio
 import json
 import websockets
 import numpy as np
-import time
-import random
-
 from collections import deque
 from scipy.signal import butter, filtfilt
 
@@ -26,6 +23,8 @@ step_samples = None
 samples_since_last = 0
 channel_names = None
 trial_data = []
+trial_buffer_ts = deque()
+trial_buffer_eeg = None
 
 left_trials = 0
 right_trials = 0
@@ -37,8 +36,12 @@ trial_labels = [
     "RIGHT"
 ]
 
-def validate_chunk(msg):
+STATE_PREPARE = "PREPARE"
+STATE_COLLECT = "COLLECT"
+STATE_REST = "REST"
 
+
+def validate_chunk(msg):
     if msg.get("type") != "eeg_chunk":
         return False
 
@@ -50,7 +53,6 @@ def validate_chunk(msg):
     ]
 
     for key in required:
-
         if key not in msg:
             return False
 
@@ -67,7 +69,6 @@ def validate_chunk(msg):
     n = len(ts)
 
     for ch in eeg:
-
         if len(ch) != n:
             return False
 
@@ -75,7 +76,6 @@ def validate_chunk(msg):
 
 
 def bandpass_filter(X, fs, low, high, order=4):
-
     nyquist = fs / 2
 
     b, a = butter(
@@ -96,7 +96,6 @@ def bandpass_filter(X, fs, low, high, order=4):
 
 
 def preprocess_mi(X, fs):
-
     X_filtered = bandpass_filter(
         X,
         fs,
@@ -118,7 +117,6 @@ def preprocess_mi(X, fs):
 
 
 def compute_power(X):
-
     return np.mean(
         X ** 2,
         axis=0
@@ -126,7 +124,6 @@ def compute_power(X):
 
 
 def extract_features(X, fs):
-
     mu = bandpass_filter(
         X,
         fs,
@@ -153,7 +150,6 @@ def extract_features(X, fs):
 
 
 def baseline_decision(features):
-
     half = len(features) // 2
 
     mu = np.mean(
@@ -167,10 +163,10 @@ def baseline_decision(features):
     score = beta - mu
 
     if score >= 0:
-
         return "RIGHT", score
 
     return "LEFT", score
+
 
 def save_trial(
     label,
@@ -180,27 +176,48 @@ def save_trial(
     X_pre,
     features
 ):
-
     trial = {
-
         "label": label,
-
         "ts_start": ts_start,
-
         "ts_end": ts_end,
-
         "X": X.copy(),
-
         "X_pre": X_pre.copy(),
-
         "features": features.copy()
     }
 
     trial_data.append(trial)
 
 
-async def main():
+def save_dataset():
+    if len(trial_data) == 0:
+        return
 
+    np.savez(
+        "mi_trials.npz",
+        labels=np.array(
+            [t["label"] for t in trial_data]
+        ),
+        ts_start=np.array(
+            [t["ts_start"] for t in trial_data]
+        ),
+        ts_end=np.array(
+            [t["ts_end"] for t in trial_data]
+        ),
+        X=np.stack(
+            [t["X"] for t in trial_data]
+        ),
+        X_pre=np.stack(
+            [t["X_pre"] for t in trial_data]
+        ),
+        features=np.stack(
+            [t["features"] for t in trial_data]
+        )
+    )
+
+    print("Dataset salvo em mi_trials.npz")
+
+
+async def main():
     global fs
     global n_channels
     global window_samples
@@ -212,33 +229,35 @@ async def main():
     global left_trials
     global right_trials
 
+    state = STATE_PREPARE
+    current_label = None
+
     while True:
-
         try:
-
             async with websockets.connect(WS_URL) as ws:
-
                 print("Connected to acquisition\n")
 
                 while True:
-
                     try:
+                        if state == STATE_REST:
+                            print("Rest...\n")
+                            await asyncio.sleep(2)
+                            state = STATE_PREPARE
+                            continue
 
                         msg = await ws.recv()
                         data = json.loads(msg)
 
                     except json.JSONDecodeError:
-
                         print("JSON inválido")
                         continue
 
                     except Exception as e:
-
+                        save_dataset()
                         print("Erro ao receber:", e)
                         break
 
                     if not validate_chunk(data):
-
                         print("Chunk inválido")
                         continue
 
@@ -248,7 +267,6 @@ async def main():
                     eeg = data["eeg"]
 
                     if buffer_eeg is None:
-
                         fs = fs_new
                         n_channels = len(ch_names)
                         channel_names = ch_names
@@ -262,6 +280,12 @@ async def main():
                         )
 
                         buffer_eeg = [
+                            deque()
+                            for _ in range(n_channels)
+                        ]
+                        trial_buffer_ts = deque()
+
+                        trial_buffer_eeg = [
                             deque()
                             for _ in range(n_channels)
                         ]
@@ -280,9 +304,26 @@ async def main():
                         or
                         ch_names != channel_names
                     ):
-
                         print("Configuração diferente.")
                         continue
+
+                    if state == STATE_PREPARE:
+                        print()
+                        print("Prepare...")
+                        await asyncio.sleep(2)
+
+                        current_label = trial_labels[
+                            trial_number % len(trial_labels)
+                        ]
+
+                        print(current_label)
+
+                        trial_buffer_ts.clear()
+
+                        for ch in trial_buffer_eeg:
+                            ch.clear()
+
+                        state = STATE_COLLECT
 
                     chunk_samples = len(ts)
 
@@ -290,47 +331,30 @@ async def main():
                         continue
 
                     for i in range(chunk_samples):
-
-                        buffer_ts.append(
+                        trial_buffer_ts.append(
                             ts[i]
                         )
 
                         for ch in range(n_channels):
-
-                            buffer_eeg[ch].append(
+                            trial_buffer_eeg[ch].append(
                                 eeg[ch][i]
                             )
 
                     samples_since_last += chunk_samples
 
-                    while len(buffer_ts) > window_samples:
-
-                        buffer_ts.popleft()
+                    while len(trial_buffer_ts) > window_samples:
+                        trial_buffer_ts.popleft()
 
                         for ch in range(n_channels):
+                            trial_buffer_eeg[ch].popleft()
 
-                            buffer_eeg[ch].popleft()
-
-                    if len(buffer_ts) < window_samples:
+                    if len(trial_buffer_ts) < window_samples:
                         continue
 
                     if samples_since_last < step_samples:
                         continue
 
                     samples_since_last = 0
-                        label = trial_labels[
-                        trial_number % 2
-                                ]
-
-                        print()
-
-                        print("Prepare...")
-
-                        await asyncio.sleep(2)
-
-                        print(label)
-
-                        print()
 
                     X = np.zeros(
                         (
@@ -340,12 +364,11 @@ async def main():
                     )
 
                     for ch in range(n_channels):
-
                         X[:, ch] = list(
-                            buffer_eeg[ch]
+                            trial_buffer_eeg[ch]
                         )
 
-                    ts_window = list(buffer_ts)
+                    ts_window = list(trial_buffer_ts)
 
                     duration = (
                         ts_window[-1]
@@ -366,25 +389,41 @@ async def main():
                         features
                     )
 
+                    save_trial(
+                        current_label,
+                        ts_window[0],
+                        ts_window[-1],
+                        X,
+                        X_pre,
+                        features
+                    )
+                    save_dataset()
+                    trial_number += 1
+
+                    if current_label == "LEFT":
+                        left_trials += 1
+                    else:
+                        right_trials += 1
+
                     print("----------------------------------")
-                    print("Window ready")
-                    print("Window shape:", X.shape)
-                    print("Duration:", round(duration, 3), "s")
+                    print("Trial saved")
+                    print("Label:", current_label)
+                    print("X shape:", X.shape)
                     print("Features:", len(features))
-                    print("Feature sample:", features[:5])
                     print("Decision:", decision)
                     print("Score:", round(score, 4))
+                    print("LEFT trials:", left_trials)
+                    print("RIGHT trials:", right_trials)
                     print()
 
-        except Exception as e:
+                    state = STATE_REST
 
+        except Exception as e:
             print("Erro de conexão:", e)
 
         print("Reconectando em 2 segundos...\n")
-
         await asyncio.sleep(2)
 
 
 if __name__ == "__main__":
-
     asyncio.run(main())
