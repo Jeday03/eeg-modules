@@ -355,6 +355,22 @@ async def main():
                         continue
 
                     samples_since_last = 0
+<<<<<<< HEAD
+=======
+                    label = trial_labels[
+                        trial_number % 2
+                    ]
+
+                    print()
+
+                    print("Prepare...")
+
+                    await asyncio.sleep(2)
+
+                    print(label)
+
+                    print()
+>>>>>>> 8b26f1336424248019392a319ba3bc4a5c5a7f61
 
                     X = np.zeros(
                         (
