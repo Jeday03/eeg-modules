@@ -31,7 +31,7 @@ async def broadcast():
     ch_names = [str(i) for i in eeg_ch]
 
     while True:
-        data = board.get_current_board_data(args.n)
+        data = board.get_board_data()
 
         if data.shape[1] > 0:
             eeg = [data[i].tolist() for i in eeg_ch]
