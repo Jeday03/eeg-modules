@@ -310,7 +310,22 @@ async def main():
                     if state == STATE_PREPARE:
                         print()
                         print("Prepare...")
-                        await asyncio.sleep(2)
+
+                        prepare_end = asyncio.get_running_loop().time() + 2
+
+                        while True:
+                            remaining = prepare_end - asyncio.get_running_loop().time()
+
+                            if remaining <= 0:
+                                break
+
+                            try:
+                                await asyncio.wait_for(
+                                    ws.recv(),
+                                    timeout=remaining
+                                )
+                            except asyncio.TimeoutError:
+                                break
 
                         current_label = trial_labels[
                             trial_number % len(trial_labels)
@@ -323,7 +338,10 @@ async def main():
                         for ch in trial_buffer_eeg:
                             ch.clear()
 
+                        samples_since_last = 0
                         state = STATE_COLLECT
+
+                        continue
 
                     chunk_samples = len(ts)
 
@@ -355,22 +373,6 @@ async def main():
                         continue
 
                     samples_since_last = 0
-<<<<<<< HEAD
-=======
-                    label = trial_labels[
-                        trial_number % 2
-                    ]
-
-                    print()
-
-                    print("Prepare...")
-
-                    await asyncio.sleep(2)
-
-                    print(label)
-
-                    print()
->>>>>>> 8b26f1336424248019392a319ba3bc4a5c5a7f61
 
                     X = np.zeros(
                         (
