@@ -1,2 +1,7 @@
 mi_trials.npz
+mi_2b_trials.npz
+datasets/
+__pycache__/
+*.pyc
+*.joblib
 .vscode/
